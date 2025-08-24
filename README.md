@@ -4,7 +4,7 @@
 而 [StarResonanceAutoMod](https://github.com/fudiyangjin/StarResonanceAutoMod) 最初来源于 [StarResonanceDamageCounter](https://github.com/dmlgzs/StarResonanceDamageCounter)。  
 
 因此，本项目延续 GPLv3 开源协议。  
-[LICENSE](LICENSE)
+![License: AGPL v3](https://img.shields.io/badge/License-AGPL%20v3-green.svg)
 
 ## 快速开始
 ### 基本用法

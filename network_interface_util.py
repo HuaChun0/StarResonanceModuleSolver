@@ -6,11 +6,7 @@
 import subprocess
 import socket
 import psutil
-import logging
 from typing import List, Dict, Optional, Tuple
-from logging_config import get_logger
-
-logger = get_logger(__name__)
 
 
 def get_network_interfaces() -> List[Dict]:
@@ -57,7 +53,7 @@ def get_network_interfaces() -> List[Dict]:
                 interfaces.append(interface_info)
                 
     except Exception as e:
-        logger.error(f"获取网络接口失败: {e}")
+        print(f"获取网络接口失败: {e}")
         
     return interfaces
 
@@ -97,7 +93,8 @@ def find_default_network_interface(interfaces: List[Dict]) -> Optional[int]:
                                         return i
                                         
     except Exception as e:
-        logger.debug(f"查找默认网络接口失败: {e}")
+        # 查找失败时不输出错误，静默处理
+        pass
         
     # 如果无法找到默认接口，尝试使用第一个活动的接口
     for i, interface in enumerate(interfaces):

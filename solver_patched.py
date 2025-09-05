@@ -46,16 +46,16 @@ if HAS_TESS and TESS_EXE.exists() and TESSDATA_DIR.exists():
 else:
     HAS_TESS = False
 
-# ==== imports ====
+
 import sys
 from pathlib import Path
 try:
-    import pandas as pd  # 可选
+    import pandas as pd
     HAS_PANDAS = True
 except Exception:
     HAS_PANDAS = False
 
-# 新版 vision_recog
+
 import vision_recog as vr
 from vision_recog import (
     load_icon_templates,
@@ -73,21 +73,13 @@ ICON_DIR = BASE_DIR / "icons"
 configure_tesseract(TESS_EXE, TESSDATA_DIR)
 print("OCR available:", ocr_is_available())
 
-# 2) 适配几何（右侧 ROI 的起始偏移与宽度；与 mod1 一样的默认值：0.12, 1.40）
+# 2) 适配几何
 set_ocr_geometry(pad_ratio=0.12, right_w_factor=1.40)
 
 vr.USE_BAR_CROP = True
 vr.USE_LEFTMOST_TOKEN = True
 
-# 可选依赖：pandas
-try:
-    import pandas as pd  # noqa: F401
-    HAS_PANDAS = True
-except Exception:
-    HAS_PANDAS = False
-
-
-#== 常量==
+# 常量
 ATTRS = [
     "抵御魔法","抵御物理","极·生命凝聚","极·绝境守护","极·生命波动","极·生命吸取",
     "力量加持","敏捷加持","智力加持","特攻伤害加持","精英打击","特攻治疗加持",
@@ -246,7 +238,7 @@ class NetworkInterfaceDialog(tk.Toplevel):
             # 添加到列表框
             self.listbox.insert(tk.END, display_text)
             self.listbox.insert(tk.END, detail_text)
-            self.listbox.insert(tk.END, "")  # 空行分隔
+            self.listbox.insert(tk.END, "")
             
         # 默认选择第一个接口（如果有的话）
         if self.interfaces:
@@ -316,7 +308,8 @@ class App(tk.Tk):
         self.targets = []
         self.target_entries = []
         self.exclude_entries = []
-
+        self.exclude_modes = []
+        
         # 异步计算通信（仅用于 OCR 文件夹识别；旧 compute worker 已移除）
         self._cancel = False
 
@@ -905,17 +898,37 @@ class App(tk.Tk):
         
         exf = ttk.LabelFrame(left, text="排除词条（可不填）")
         exf.pack(fill=tk.X, pady=(0,6))
+
         labels = [f"排除{i}" for i in range(1, 10)]
         idx = 0
         for row_i in range(3):
             rowf = ttk.Frame(exf)
             rowf.pack(fill=tk.X, padx=6, pady=3)
             for _ in range(3):
-                ttk.Label(rowf, text=labels[idx]).pack(side=tk.LEFT, padx=(0,4))
-                ent = AttrPickerField(rowf, ATTRS, on_change=self._entry_changed, width=12, open_handler=lambda e: self._open_group_picker_excludes())
-                ent.pack(side=tk.LEFT, padx=(0,10))
+                # 创建一个容器框架
+                item_frame = ttk.Frame(rowf)
+                item_frame.pack(side=tk.LEFT, padx=(0,10))
+                
+                ttk.Label(item_frame, text=labels[idx]).pack(side=tk.LEFT, padx=(0,4))
+                
+                # 属性选择框
+                ent = AttrPickerField(item_frame, ATTRS, on_change=self._entry_changed, width=12, 
+                                    open_handler=lambda e: self._open_group_picker_excludes())
+                ent.pack(side=tk.LEFT, padx=(0,4))
+                
+                # 硬/软模式选择
+                mode_var = tk.StringVar(value="hard")
+                mode_frame = ttk.Frame(item_frame)
+                mode_frame.pack(side=tk.LEFT)
+                ttk.Radiobutton(mode_frame, text="硬", value="hard", variable=mode_var, 
+                            command=self._refresh_mutex_states).pack(side=tk.LEFT)
+                ttk.Radiobutton(mode_frame, text="软", value="soft", variable=mode_var,
+                            command=self._refresh_mutex_states).pack(side=tk.LEFT)
+                
                 self.exclude_entries.append(ent)
+                self.exclude_modes.append(mode_var)
                 idx += 1
+                
         modef = ttk.LabelFrame(left, text="计算方式", padding=(4, 2)) 
         modef.pack(fill=tk.X, pady=(2, 2)) 
 
@@ -1325,9 +1338,19 @@ class App(tk.Tk):
         slots = 4
         gems_all = list(self.gems)
 
-        # 读取排除属性
-        exclude_set = {ent.get_value() for ent in self.exclude_entries if ent.get_value()}
-
+        # 分别读取硬排除和软排除属性
+        hard_exclude_set = set()
+        soft_exclude_set = set()
+        
+        for i, ent in enumerate(self.exclude_entries):
+            attr_name = ent.get_value()
+            if attr_name:
+                mode = self.exclude_modes[i].get() if i < len(self.exclude_modes) else "hard"
+                if mode == "soft":
+                    soft_exclude_set.add(attr_name)
+                else:
+                    hard_exclude_set.add(attr_name)
+        
         if len(gems_all) < slots:
             messagebox.showerror("错误", f"需要至少 {slots} 颗模组。")
             return
@@ -1337,21 +1360,21 @@ class App(tk.Tk):
             messagebox.showerror("缺少计算模块", "未能导入外部计算模块（module_compute.py / module_optimizer_calculations.py）。")
             return
 
-        # 先过滤掉带有排除属性的模组
-        def _gem_has_excluded(g):
-            return any(x in exclude_set for x in [g.get("a1"), g.get("a2"), g.get("a3")])
+        # 先过滤掉带有硬排除属性的模组
+        def _gem_has_hard_excluded(g):
+            return any(x in hard_exclude_set for x in [g.get("a1"), g.get("a2"), g.get("a3")])
         
-        filtered_gems = [g for g in gems_all if not _gem_has_excluded(g)]
+        filtered_gems = [g for g in gems_all if not _gem_has_hard_excluded(g)]
         
         if len(filtered_gems) < slots:
-            messagebox.showwarning("无可用组合", "排除属性过多或模组过少，无法构成组合。")
+            messagebox.showwarning("无可用组合", "硬排除属性过多或模组过少，无法构成组合。")
             return
 
         # 解析目标需求
         target_requirements = self._parse_target_requirements()
 
         # 获取计算模式
-        mode = getattr(self, "compute_mode", None).get() if hasattr(self, "compute_mode") else "fast"
+        mode = self.compute_mode.get() if hasattr(self, "compute_mode") else "fast"
 
         # 清空三个面板
         for box in (self.req_text, self.abs_text, self.bs_text):
@@ -1360,14 +1383,14 @@ class App(tk.Tk):
             box.configure(state="disabled")
 
         if mode == "fast":
-            # 快速模式：同步执行
-            self._compute_fast_sync_with_requirements(filtered_gems, exclude_set, slots, target_requirements)
+            # 快速模式：同步执行，传递软排除集合
+            self._compute_fast_sync_with_requirements(filtered_gems, hard_exclude_set, soft_exclude_set, slots, target_requirements)
         else:
-            # 全部模式：异步执行
-            self._compute_full_async_with_requirements(filtered_gems, exclude_set, slots, target_requirements)
+            # 全部模式：异步执行，传递软排除集合
+            self._compute_full_async_with_requirements(filtered_gems, hard_exclude_set, soft_exclude_set, slots, target_requirements)
 
-    def _compute_full_async_with_requirements(self, filtered_gems, exclude_set, slots, target_requirements):
-        """异步全部计算：支持需求最佳方案的版本"""
+    def _compute_full_async_with_requirements(self, filtered_gems, hard_exclude_set, soft_exclude_set, slots, target_requirements):
+        """异步全部计算：支持需求最佳方案的版本，智能选择多线程/多进程，支持软排除"""
         import threading
         import queue
         
@@ -1402,10 +1425,14 @@ class App(tk.Tk):
         except:
             pass
         
-        # 启动工作线程 - 使用修正后的双Top-K版本
+        # 智能选择算法
+        use_multiprocess = len(filtered_gems) >= 150
+        algorithm_type = "多进程" if use_multiprocess else "多线程"
+        
+        # 启动工作线程，传递软排除集合
         worker = threading.Thread(
-            target=self._compute_full_worker_with_requirements_dual_topk, 
-            args=(filtered_gems, exclude_set, slots, target_requirements),
+            target=self._compute_full_worker_with_requirements_group_partition, 
+            args=(filtered_gems, hard_exclude_set, soft_exclude_set, slots, target_requirements, use_multiprocess),
             daemon=True
         )
         worker.start()
@@ -1413,12 +1440,13 @@ class App(tk.Tk):
         # 开始轮询进度
         self._poll_compute_progress_with_requirements()
 
-    def _compute_full_worker_with_requirements_dual_topk(self, filtered_gems, exclude_set, slots, target_requirements):
+    def _compute_full_worker_with_requirements_group_partition(self, filtered_gems, hard_exclude_set, soft_exclude_set, slots, target_requirements, use_multiprocess=False):
         """
-        全部计算工作线程：支持双Top-K的版本，分别生成战力和需求两套结果
+        基于整数拆分 + 组内组合笛卡尔乘积的全部计算工作线程
+        支持多线程/多进程智能选择，维护双Top-K，支持软排除
         """
         try:
-            # 导入配置（同原版）
+            # 导入配置
             try:
                 from module_types import (
                     ATTR_THRESHOLDS, BASIC_ATTR_POWER_MAP, SPECIAL_ATTR_POWER_MAP,
@@ -1431,8 +1459,10 @@ class App(tk.Tk):
                 TOTAL_ATTR_POWER_MAP = {i: int(i * 0.1) for i in range(0, 201)}
                 ATTR_NAME_TYPE_MAP = {}
             
+            # 创建计算器实例，传入软排除
             opt = ModuleOptimizerCalculations(
-                exclude_set=exclude_set,
+                exclude_set=hard_exclude_set,
+                soft_exclude_set=soft_exclude_set,  # 传入软排除
                 slots=slots,
                 thresholds=ATTR_THRESHOLDS,
                 attr_type_map=ATTR_NAME_TYPE_MAP,
@@ -1441,46 +1471,40 @@ class App(tk.Tk):
                 total_attr_power_map=TOTAL_ATTR_POWER_MAP
             )
             
-            # 进度回调
-            def enum_progress_callback(current, total, message=""):
-                if not self._cancel_flag.is_set():
-                    progress = int(80 * current / total) if total > 0 else 0
-                    self._compute_queue.put(("progress", progress, 100, message))
+            # 设置取消标志
+            opt._cancel_flag = self._cancel_flag
+            opt._compute_queue = self._compute_queue
             
-            from math import comb   
-            total_combinations = comb(len(filtered_gems), slots)
+            # 按属性分组
+            groups = opt._partition_gems_by_attributes(filtered_gems)
+            self._compute_queue.put(("progress", 5, 100, f"按属性分组完成，共{len(groups)}组"))
             
-            # 使用双Top-K枚举方法
-            if total_combinations > 50000:  # 大数据集使用多线程版本
-                battle_solutions, requirement_solutions = opt.enum_all_combinations_ui_threaded_memory_safe_dual_topk(
-                    filtered_gems,
-                    slots=slots,
-                    progress_callback=enum_progress_callback,
-                    cancel_flag=self._cancel_flag,
-                    max_keep=500,
-                    target_requirements=target_requirements
+            # 生成整数拆分
+            integer_partitions = opt._generate_integer_partitions(slots, len(groups))
+            self._compute_queue.put(("progress", 10, 100, f"生成整数拆分完成，共{len(integer_partitions)}种"))
+            
+            if use_multiprocess:
+                battle_solutions, requirement_solutions = opt._enum_multiprocess_group_partition(
+                    groups, integer_partitions, slots, target_requirements, 
+                    ATTR_THRESHOLDS, ATTR_NAME_TYPE_MAP, BASIC_ATTR_POWER_MAP, 
+                    SPECIAL_ATTR_POWER_MAP, TOTAL_ATTR_POWER_MAP
                 )
             else:
-                battle_solutions, requirement_solutions = opt.enum_all_combinations_ui_memory_safe_dual_topk(
-                    filtered_gems,
-                    slots=slots,
-                    progress_callback=enum_progress_callback,
-                    max_keep=500,
-                    target_requirements=target_requirements
+                battle_solutions, requirement_solutions = opt._enum_multithread_group_partition(
+                    groups, integer_partitions, slots, target_requirements,
+                    ATTR_THRESHOLDS, ATTR_NAME_TYPE_MAP, BASIC_ATTR_POWER_MAP, 
+                    SPECIAL_ATTR_POWER_MAP, TOTAL_ATTR_POWER_MAP
                 )
 
             if self._cancel_flag.is_set():
                 return
 
-            self._compute_queue.put(("progress", 80, 100, "生成最终方案..."))
-            
-            # 直接使用双Top-K的结果，取前30个
+            # 最终结果处理
             abs_list = battle_solutions[:30]
             req_list = requirement_solutions[:30]
-            
-            # 职业推荐（目前使用战力排序）
             bs_list = abs_list
             
+            algorithm_desc = "多进程组合拆分" if use_multiprocess else "多线程组合拆分"
             self._compute_queue.put(("progress", 100, 100, "完成"))
             self._compute_queue.put(("result", req_list, abs_list, bs_list, opt, target_requirements))
 
@@ -1497,18 +1521,18 @@ class App(tk.Tk):
             if attr_name and attr_name.strip():
                 try:
                     target_level = int(sp.get())
-                    if target_level > 0:  # 只考虑大于0的等级要求
+                    if target_level > 0:  # 等级大于0时直接使用
                         requirements.append((attr_name, target_level))
-                    # 移除下面这行：如果等级为0就不算有目标需求
-                    # else:
-                    #     requirements.append((attr_name, 1))  # 默认至少要1级
+                    elif target_level == 0:  # 等级等于0时默认为6级
+                        requirements.append((attr_name, 6))
+                    # 负数等级则跳过，不添加到需求中
                 except ValueError:
                     # 解析失败，跳过这个目标
                     continue
         return requirements
 
-    def _compute_fast_sync_with_requirements(self, filtered_gems, exclude_set, slots, target_requirements):
-        """快速计算：支持需求最佳方案的专门评分"""
+    def _compute_fast_sync_with_requirements(self, filtered_gems, hard_exclude_set, soft_exclude_set, slots, target_requirements):
+        """快速计算：支持软排除"""
         try:
             # 简单进度条
             dlg = _Progress(self, 100, on_cancel=lambda: self._set_cancel(dlg))
@@ -1527,8 +1551,10 @@ class App(tk.Tk):
                 TOTAL_ATTR_POWER_MAP = {i: int(i * 0.1) for i in range(0, 201)}
                 ATTR_NAME_TYPE_MAP = {}
             
+            # 创建计算器，传入软排除集合
             opt = ModuleOptimizerCalculations(
-                exclude_set=exclude_set, 
+                exclude_set=hard_exclude_set,
+                soft_exclude_set=soft_exclude_set,  # 传入软排除
                 slots=slots,
                 thresholds=ATTR_THRESHOLDS,
                 attr_type_map=ATTR_NAME_TYPE_MAP,
@@ -1556,7 +1582,7 @@ class App(tk.Tk):
                 candidates, 
                 slots=slots, 
                 prioritize_high_level=True, 
-                num_solutions=200,  # 生成更多解以便后续排序
+                num_solutions=200,
                 max_attempts=500
             )
             
@@ -1567,8 +1593,6 @@ class App(tk.Tk):
             dlg.set_progress(70, 100)
             
             if solutions:
-            # 分别计算两种排序
-                
                 # 1. 按战力分排序（用于战力最高方案）
                 battle_power_sorted = []
                 for sol in solutions:
@@ -1577,18 +1601,16 @@ class App(tk.Tk):
                 battle_power_sorted.sort(key=lambda x: x[0], reverse=True)
                 abs_list = [sol for bp, sol in battle_power_sorted[:30]]
                 
-                # 2. 按需求评分排序（仅当有具体目标需求时）
-                if target_requirements and len(target_requirements) > 0:
-                    requirement_scored = []
-                    for sol in solutions:
-                        req_score = opt.requirement_score_from_attr_breakdown(sol.attr_breakdown, target_requirements)
-                        requirement_scored.append((req_score, sol))
-                    requirement_scored.sort(key=lambda x: x[0], reverse=True)
-                    req_list = [sol for score, sol in requirement_scored[:30]]
-                else:
-                    req_list = abs_list
+                # 2. 按需求评分排序（考虑目标需求和软排除）
+                requirement_scored = []
+                for sol in solutions:
+                    # 需求评分会考虑软排除
+                    req_score = opt.requirement_score_from_attr_breakdown(sol.attr_breakdown, target_requirements)
+                    requirement_scored.append((req_score, sol))
+                requirement_scored.sort(key=lambda x: x[0], reverse=True)
+                req_list = [sol for score, sol in requirement_scored[:30]]
                 
-                # 3. 职业推荐方案（暂时也使用战力排序，后续根据职业属性优化）
+                # 3. 职业推荐方案（暂时也使用战力排序）
                 bs_list = abs_list
                 
             else:
@@ -1609,7 +1631,6 @@ class App(tk.Tk):
             except:
                 pass
 
-    
     def _compute_full_worker_with_requirements(self, filtered_gems, exclude_set, slots, target_requirements):
         """全部计算工作线程：支持需求最佳方案评分"""
         try:
@@ -2322,4 +2343,9 @@ class AttrPickerField(ttk.Frame):
 
 
 if __name__ == "__main__":
-    App().mainloop()
+    import sys, multiprocessing
+    if getattr(sys, "frozen", False) and sys.platform.startswith("win"):
+        multiprocessing.freeze_support()
+    # 正常启动 GUI
+    app = App()
+    app.mainloop()
